@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#102b46">
+<title>Faisal Hospital | QR Attendance</title>
+
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+
+<style>
+*{box-sizing:border-box}
+body{
+ margin:0;background:#edf2f7;color:#18324d;
+ font-family:Arial,sans-serif;min-height:100vh;
+}
+header{
+ background:linear-gradient(135deg,#102b46,#17618a);
+ color:white;text-align:center;padding:27px 15px;
+}
+.logo{font-size:30px;font-weight:800;letter-spacing:1px}
+.subtitle{font-size:13px;margin-top:8px;color:#d8e8f5}
+main{max-width:480px;margin:22px auto;padding:12px}
+.card{
+ background:white;border-radius:16px;padding:20px;
+ box-shadow:0 6px 25px #17324d15;
+}
+.status{
+ text-align:center;padding:13px;border-radius:9px;
+ background:#e8f2ff;color:#174b78;font-weight:bold;
+ font-size:13px;margin-bottom:15px;
+}
+#reader{width:100%;overflow:hidden;border-radius:12px}
+button{
+ width:100%;border:0;border-radius:10px;
+ padding:16px;margin:7px 0;font-size:15px;
+ font-weight:bold;color:white;cursor:pointer;
+}
+button:disabled{opacity:.5}
+.start{background:#17618a}
+.stop{background:#b42323}
+.entry{background:#16834b}
+.exit{background:#35445a}
+.actions{display:none;margin-top:12px}
+.result{
+ background:#f1f5f9;padding:16px;border-radius:10px;
+ text-align:center;margin-top:15px;font-size:14px;
+ line-height:1.6;overflow-wrap:anywhere;
+}
+.success{background:#dcfce7;color:#166534}
+.error{background:#fee2e2;color:#991b1b}
+.footer{text-align:center;color:#64748b;font-size:12px;padding:20px}
+</style>
+</head>
+
+<body>
+<header>
+ <div class="logo">FAISAL HOSPITAL</div>
+ <div class="subtitle">STAFF ATTENDANCE MANAGEMENT SYSTEM</div>
+ <div class="subtitle">SECURE QR ATTENDANCE PORTAL</div>
+</header>
+
+<main>
+ <section class="card">
+  <div class="status" id="status">READY TO SCAN</div>
+
+  <div id="reader"></div>
+
+  <button class="start" id="startBtn">START BACK CAMERA</button>
+  <button class="stop" id="stopBtn" hidden>STOP CAMERA</button>
+
+  <div class="actions" id="actions">
+   <div class="status" id="employee">Employee detected</div>
+   <button class="entry" id="entryBtn">MARK ENTRY</button>
+   <button class="exit" id="exitBtn">MARK EXIT</button>
+  </div>
+
+  <div class="result" id="result">
+   Please start camera and scan your employee QR code.
+  </div>
+ </section>
+
+ <div class="footer">
+  FAISAL HOSPITAL<br>
+  Staff Attendance Management System
+ </div>
+</main>
+
+<script>
+"use strict";
+
+const API =
+"https://script.google.com/macros/s/AKfycbyXO2x6E5BsUc-ekiai1mPtO_GToPUqiX8V5bsrxBZO845iIy2aMvD8WgJRnD2niN73/exec";
+
+const $ = id => document.getElementById(id);
+
+let scanner=null;
+let cameraRunning=false;
+let busy=false;
+let scannedId="";
+let completed=false;
+
+function message(text,type=""){
+ $("result").textContent=text;
+ $("result").className="result "+type;
+}
+
+function extractId(text){
+ const value=String(text||"").trim();
+ const match=value.match(/EMP\d+/i);
+ return match ? match[0].toUpperCase() : value.toUpperCase();
+}
+
+async function startCamera(){
+ if(cameraRunning || busy)return;
+
+ if(typeof Html5Qrcode==="undefined"){
+  message("QR scanner library failed to load.","error");
+  return;
+ }
+
+ $("startBtn").disabled=true;
+ $("status").textContent="REQUESTING BACK CAMERA...";
+
+ try{
+  scanner=new Html5Qrcode("reader");
+
+  await scanner.start(
+   {facingMode:"environment"},
+   {
+    fps:10,
+    qrbox:(w,h)=>{
+     const size=Math.floor(Math.min(250,w*.75,h*.75));
+     return {width:size,height:size};
+    },
+    aspectRatio:1
+   },
+   async decodedText=>{
+    if(busy || completed)return;
+
+    const id=extractId(decodedText);
+    if(!id)return;
+
+    busy=true;
+    scannedId=id;
+    $("employee").textContent="EMPLOYEE ID: "+id;
+    $("actions").style.display="block";
+    $("status").textContent="QR SCANNED SUCCESSFULLY";
+
+    message("Employee QR detected. Select Entry or Exit.","success");
+    await stopCamera();
+    busy=false;
+   }
+  );
+
+  cameraRunning=true;
+  $("startBtn").hidden=true;
+  $("stopBtn").hidden=false;
+  $("status").textContent="CAMERA ACTIVE — SCAN QR";
+
+ }catch(error){
+  scanner=null;
+  cameraRunning=false;
+  $("startBtn").disabled=false;
+  $("status").textContent="CAMERA ERROR";
+  message(
+   (error.name||"Error")+": "+(error.message||String(error)),
+   "error"
+  );
+ }
+}
+
+async function stopCamera(){
+ if(!scanner)return;
+
+ const old=scanner;
+ scanner=null;
+
+ try{
+  if(cameraRunning)await old.stop();
+  await old.clear();
+ }catch(e){console.log(e)}
+
+ cameraRunning=false;
+ $("stopBtn").hidden=true;
+ $("startBtn").hidden=false;
+ $("startBtn").disabled=false;
+}
+
+function markAttendance(action){
+ if(busy || completed || !scannedId)return;
+
+ busy=true;
+ $("entryBtn").disabled=true;
+ $("exitBtn").disabled=true;
+
+ message("Submitting attendance securely...");
+
+ const callback="fhCallback";
+
+ window[callback]=response=>{
+  delete window[callback];
+
+  busy=false;
+  $("entryBtn").disabled=false;
+  $("exitBtn").disabled=false;
+
+  if(response && response.success){
+   completed=true;
+   message(response.message,"success");
+   $("status").textContent="ATTENDANCE RECORDED";
+   $("actions").style.display="none";
+  }else{
+   message(response?.message||"Attendance failed.","error");
+  }
+ };
+
+ const script=document.createElement("script");
+ script.src=API+
+  "?action=mark"+
+  "&id="+encodeURIComponent(scannedId)+
+  "&type="+encodeURIComponent(action)+
+  "&callback="+callback;
+
+ script.onerror=()=>{
+  delete window[callback];
+  busy=false;
+  $("entryBtn").disabled=false;
+  $("exitBtn").disabled=false;
+  message("Connection failed. Please try again.","error");
+ };
+
+ document.body.appendChild(script);
+}
+
+$("startBtn").addEventListener("click",startCamera);
+$("stopBtn").addEventListener("click",stopCamera);
+$("entryBtn").addEventListener("click",()=>markAttendance("ENTRY"));
+$("exitBtn").addEventListener("click",()=>markAttendance("EXIT"));
+
+</script>
+</body>
+</html>
